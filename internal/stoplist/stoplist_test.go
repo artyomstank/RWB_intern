@@ -33,7 +33,7 @@ func TestStopList_EmptyByDefault(t *testing.T) {
 	sl, cleanup := newTempStopList(t)
 	defer cleanup()
 
-	if sl.Contains("казино") {
+	if sl.Contains("кеды") {
 		t.Error("expected empty stoplist on startup")
 	}
 	if len(sl.List()) != 0 {
@@ -45,12 +45,12 @@ func TestStopList_Add(t *testing.T) {
 	sl, cleanup := newTempStopList(t)
 	defer cleanup()
 
-	if err := sl.Add("казино"); err != nil {
+	if err := sl.Add("кеды"); err != nil {
 		t.Fatalf("Add failed: %v", err)
 	}
 
-	if !sl.Contains("казино") {
-		t.Error("expected 'казино' to be in stoplist after Add")
+	if !sl.Contains("кеды") {
+		t.Error("expected 'кеды' to be in stoplist after Add")
 	}
 }
 
@@ -58,11 +58,10 @@ func TestStopList_Add_Idempotent(t *testing.T) {
 	sl, cleanup := newTempStopList(t)
 	defer cleanup()
 
-	if err := sl.Add("ставки"); err != nil {
+	if err := sl.Add("сланцы"); err != nil {
 		t.Fatal(err)
 	}
-	// Повторное добавление не должно возвращать ошибку.
-	if err := sl.Add("ставки"); err != nil {
+	if err := sl.Add("сланцы"); err != nil {
 		t.Fatalf("second Add should be idempotent, got error: %v", err)
 	}
 
@@ -90,7 +89,6 @@ func TestStopList_Remove_Idempotent(t *testing.T) {
 	sl, cleanup := newTempStopList(t)
 	defer cleanup()
 
-	// Удаление несуществующего слова не должно давать ошибку.
 	if err := sl.Remove("несуществующее"); err != nil {
 		t.Errorf("Remove of non-existent word should be idempotent, got: %v", err)
 	}
@@ -103,7 +101,7 @@ func TestStopList_List_SortedByTime(t *testing.T) {
 	words := []string{"слово-а", "слово-б", "слово-в"}
 	for _, w := range words {
 		sl.Add(w)
-		time.Sleep(2 * time.Millisecond) // обеспечиваем различие AddedAt
+		time.Sleep(2 * time.Millisecond)
 	}
 
 	list := sl.List()
@@ -126,27 +124,25 @@ func TestStopList_Persistence(t *testing.T) {
 	f.Close()
 	defer os.Remove(f.Name())
 
-	// Первый экземпляр — добавляем слова.
 	sl1, err := stoplist.New(f.Name())
 	if err != nil {
 		t.Fatal(err)
 	}
-	sl1.Add("казино")
-	sl1.Add("ставки")
+	sl1.Add("кеды")
+	sl1.Add("сланцы")
 	sl1.Close()
 
-	// Второй экземпляр (симулируем рестарт) — слова должны сохраниться.
 	sl2, err := stoplist.New(f.Name())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer sl2.Close()
 
-	if !sl2.Contains("казино") {
-		t.Error("expected 'казино' to persist across restart")
+	if !sl2.Contains("кеды") {
+		t.Error("expected 'кеды' to persist across restart")
 	}
-	if !sl2.Contains("ставки") {
-		t.Error("expected 'ставки' to persist across restart")
+	if !sl2.Contains("сланцы") {
+		t.Error("expected 'сланцы' to persist across restart")
 	}
 	if len(sl2.List()) != 2 {
 		t.Errorf("expected 2 entries after restart, got %d", len(sl2.List()))

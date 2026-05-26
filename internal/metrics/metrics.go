@@ -2,38 +2,26 @@ package metrics
 
 import "github.com/prometheus/client_golang/prometheus"
 
-// Metrics содержит все счётчики и гистограммы сервиса.
 type Metrics struct {
-	// EventsConsumed — успешно обработанные события из Kafka.
 	EventsConsumed prometheus.Counter
 
-	// EventsDropped — события, которые не удалось распарсить.
 	EventsDropped prometheus.Counter
 
-	// EventsFiltered — события, отфильтрованные из-за позднего прихода или будущего ts.
 	EventsFiltered prometheus.Counter
 
-	// AnomaliesDetected — запросы, исключённые как аномалии (накрутка).
 	AnomaliesDetected prometheus.Counter
 
-	// TopNComputeTime — время вычисления топа фоновым воркером.
 	TopNComputeTime prometheus.Histogram
 
-	// HTTPDuration — латентность HTTP-запросов (по методу, пути, статусу).
 	HTTPDuration *prometheus.HistogramVec
 
-	// ConsumerLag — отставание консьюмера от последнего офсета в Kafka.
 	ConsumerLag prometheus.Gauge
 
-	// StopListSize — текущий размер стоп-листа.
 	StopListSize prometheus.Gauge
 
-	// TopNLastUpdated — UNIX timestamp последнего обновления топа.
-	// Используется для детектирования зависшего воркера.
 	TopNLastUpdated prometheus.Gauge
 }
 
-// New создаёт и регистрирует все метрики в переданном Registerer.
 func New(reg prometheus.Registerer) *Metrics {
 	eventsConsumed := prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "trending_events_consumed_total",

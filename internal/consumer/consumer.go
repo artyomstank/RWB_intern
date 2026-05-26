@@ -24,14 +24,12 @@ import (
 	"github.com/artyomstank/RWB_intern/internal/window"
 )
 
-// Consumer читает события из Kafka и передаёт их в Window.
 type Consumer struct {
 	client *kgo.Client
 	win    *window.Window
 	m      *metrics.Metrics
 }
 
-// New создаёт и подключает Kafka-консьюмер.
 func New(
 	brokers []string,
 	topic,
@@ -46,10 +44,8 @@ func New(
 		kgo.ConsumerGroup(group),
 		kgo.ConsumeTopics(topic),
 
-		// Ручной commit offsets
 		kgo.DisableAutoCommit(),
 
-		// Защита от ребалансировки во время обработки batch
 		kgo.BlockRebalanceOnPoll(),
 
 		// batching
@@ -57,7 +53,6 @@ func New(
 		kgo.FetchMinBytes(1),
 		kgo.FetchMaxWait(500*time.Millisecond),
 
-		// читать только новые сообщения
 		kgo.ConsumeResetOffset(kgo.NewOffset().AtEnd()),
 	)
 	if err != nil {
@@ -71,7 +66,6 @@ func New(
 	}, nil
 }
 
-// Run запускает poll-loop.
 func (c *Consumer) Run(ctx context.Context) error {
 	for {
 		fetches := c.client.PollFetches(ctx)
@@ -84,7 +78,6 @@ func (c *Consumer) Run(ctx context.Context) error {
 			return ctx.Err()
 		}
 
-		// Ошибки отдельных partition
 		fetches.EachError(func(topic string, partition int32, err error) {
 			slog.Error(
 				"kafka fetch error",
@@ -96,7 +89,6 @@ func (c *Consumer) Run(ctx context.Context) error {
 
 		var consumed, dropped, filtered int
 
-		// Обработка records
 		fetches.EachRecord(func(r *kgo.Record) {
 			ok, isFiltered := c.handleRecord(r)
 
@@ -112,21 +104,6 @@ func (c *Consumer) Run(ctx context.Context) error {
 			}
 		})
 
-		// =========================================================
-		// COMMIT OFFSETS
-		// =========================================================
-		//
-		// CommitUncommittedOffsets:
-		// - коммитит offsets всех успешно fetched records
-		// - используется вместе с DisableAutoCommit()
-		// - сохраняет at-least-once semantics
-		//
-		// Если приложение упадёт:
-		//   обработка выполнится повторно
-		// что допустимо для идемпотентной агрегации.
-		//
-		// =========================================================
-
 		if err := c.client.CommitUncommittedOffsets(ctx); err != nil {
 			slog.Error(
 				"failed to commit kafka offsets",
@@ -134,16 +111,11 @@ func (c *Consumer) Run(ctx context.Context) error {
 			)
 		}
 
-		// Метрики
 		if consumed > 0 || dropped > 0 || filtered > 0 {
 			c.m.EventsConsumed.Add(float64(consumed))
 			c.m.EventsDropped.Add(float64(dropped))
 			c.m.EventsFiltered.Add(float64(filtered))
 		}
-
-		// =========================================================
-		// CONSUMER LAG
-		// =========================================================
 
 		var totalLag int64
 
@@ -164,7 +136,6 @@ func (c *Consumer) Run(ctx context.Context) error {
 					}
 				}
 
-				// lag = HWM - committed - 1
 				if committedOffset.Offset >= 0 &&
 					p.HighWatermark > committedOffset.Offset {
 
@@ -182,10 +153,6 @@ func (c *Consumer) Run(ctx context.Context) error {
 	}
 }
 
-// handleRecord парсит одно Kafka-сообщение.
-// Возвращает:
-//
-//	recorded, filtered
 func (c *Consumer) handleRecord(
 	r *kgo.Record,
 ) (recorded, filtered bool) {
@@ -200,7 +167,7 @@ func (c *Consumer) handleRecord(
 			"err", err,
 		)
 
-		return false, false // dropped
+		return false, false
 	}
 
 	if event.Query == "" || event.UserID == "" {
@@ -213,13 +180,12 @@ func (c *Consumer) handleRecord(
 	}
 
 	if !c.win.Record(&event) {
-		return false, true // filtered
+		return false, true
 	}
 
 	return true, false
 }
 
-// Close закрывает Kafka-клиент.
 func (c *Consumer) Close() {
 	c.client.Close()
 }

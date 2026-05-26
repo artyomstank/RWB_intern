@@ -44,16 +44,12 @@ func NewApp() (*App, error) {
 		"topn_refresh", cfg.TopN.RefreshTTL,
 	)
 
-	// ── Prometheus ────────────────────────────────────────────────────────────
-
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(
 		prometheus.NewGoCollector(),
 		prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}),
 	)
 	m := metrics.New(reg)
-
-	// ── Core components ───────────────────────────────────────────────────────
 
 	win := window.New()
 	detector := anomaly.New()
@@ -66,12 +62,8 @@ func NewApp() (*App, error) {
 	slog.Info("stoplist loaded", "words", len(sl.List()))
 	m.StopListSize.Set(float64(len(sl.List())))
 
-	// ── Top-N cache + background worker ──────────────────────────────────────
-
 	cache := new(topn.Cache)
 	worker := topn.NewWorker(win, sl, detector, cache, m, cfg.TopN.N, cfg.TopN.RefreshTTL)
-
-	// ── Kafka consumer ────────────────────────────────────────────────────────
 
 	cons, err := consumer.New(
 		cfg.Kafka.Brokers,
@@ -84,8 +76,6 @@ func NewApp() (*App, error) {
 		sl.Close()
 		return nil, fmt.Errorf("create kafka consumer: %w", err)
 	}
-
-	// ── HTTP server ───────────────────────────────────────────────────────────
 
 	promHandler := promhttp.HandlerFor(reg, promhttp.HandlerOpts{
 		EnableOpenMetrics: true,

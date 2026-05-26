@@ -37,8 +37,6 @@ type TopNConfig struct {
 	RefreshTTL time.Duration
 }
 
-// MustLoad читает конфигурацию из переменных окружения.
-// При критической ошибке логирует и завершает процесс.
 func MustLoad() Config {
 	return Config{
 		HTTP: HTTPConfig{

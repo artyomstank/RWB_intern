@@ -1,10 +1,3 @@
-// Package stoplist реализует динамический стоп-лист поисковых запросов.
-//
-// Хранение: bbolt (embedded B-tree KV) для персистентности + sync.RWMutex map
-// для быстрого Contains() в hot path фонового воркера.
-//
-// bbolt — embedded, ACID (WAL), без внешних зависимостей.
-// Единственный минус: один writer за раз, — но Add/Remove вызываются редко.
 package stoplist
 
 import (
@@ -20,20 +13,17 @@ import (
 
 var bucketName = []byte("stoplist")
 
-// Entry — одна запись стоп-листа.
 type Entry struct {
 	Word    string    `json:"word"`
 	AddedAt time.Time `json:"added_at"`
 }
 
-// StopList — основная структура.
 type StopList struct {
 	db    *bolt.DB
 	mu    sync.RWMutex
-	words map[string]Entry // in-memory кэш для O(1) Contains()
+	words map[string]Entry
 }
 
-// New открывает или создаёт bbolt БД и загружает слова в память.
 func New(path string) (*StopList, error) {
 	db, err := bolt.Open(path, 0o600, &bolt.Options{Timeout: 2 * time.Second})
 	if err != nil {
@@ -45,7 +35,6 @@ func New(path string) (*StopList, error) {
 		words: make(map[string]Entry),
 	}
 
-	// Инициализируем бакет и загружаем существующие слова.
 	err = db.Update(func(tx *bolt.Tx) error {
 		bkt, err := tx.CreateBucketIfNotExists(bucketName)
 		if err != nil {
@@ -54,7 +43,6 @@ func New(path string) (*StopList, error) {
 		return bkt.ForEach(func(k, v []byte) error {
 			var e Entry
 			if jsonErr := json.Unmarshal(v, &e); jsonErr != nil {
-				// Пропускаем повреждённые записи, не прерываем загрузку.
 				return nil
 			}
 			sl.words[string(k)] = e
@@ -69,9 +57,6 @@ func New(path string) (*StopList, error) {
 	return sl, nil
 }
 
-// Contains возвращает true если запрос (целиком) есть в стоп-листе.
-// Вызывается из горячего пути фонового воркера — только RLock.
-// Сравнение точное (нормализованная строка), не substring.
 func (sl *StopList) Contains(word string) bool {
 	sl.mu.RLock()
 	_, ok := sl.words[word]
@@ -79,13 +64,10 @@ func (sl *StopList) Contains(word string) bool {
 	return ok
 }
 
-// Add добавляет слово в стоп-лист (персистентно + in-memory).
-// Идемпотентно: повторное добавление обновляет AddedAt.
-// Слово нормализуется перед сохранением для согласованности с window.
 func (sl *StopList) Add(word string) error {
 	word = normalizeWord(word)
 	if word == "" {
-		return nil // пустая строка после нормализации — пропускаем
+		return nil
 	}
 
 	e := Entry{Word: word, AddedAt: time.Now().UTC()}
@@ -106,13 +88,10 @@ func (sl *StopList) Add(word string) error {
 	return nil
 }
 
-// Remove удаляет слово из стоп-листа.
-// Если слова нет — не ошибка (идемпотентно).
-// Слово нормализуется перед удалением для согласованности с window.
 func (sl *StopList) Remove(word string) error {
 	word = normalizeWord(word)
 	if word == "" {
-		return nil // пустая строка после нормализации — пропускаем
+		return nil
 	}
 
 	if err := sl.db.Update(func(tx *bolt.Tx) error {
@@ -127,7 +106,6 @@ func (sl *StopList) Remove(word string) error {
 	return nil
 }
 
-// List возвращает все слова стоп-листа, отсортированные по времени добавления.
 func (sl *StopList) List() []Entry {
 	sl.mu.RLock()
 	result := make([]Entry, 0, len(sl.words))
@@ -142,12 +120,10 @@ func (sl *StopList) List() []Entry {
 	return result
 }
 
-// Close закрывает bbolt БД.
 func (sl *StopList) Close() error {
 	return sl.db.Close()
 }
 
-// normalizeWord нормализует слово аналогично window.Record().
 func normalizeWord(s string) string {
 	if s == "" {
 		return ""

@@ -1,13 +1,3 @@
-// Package topn реализует кэш результатов и фоновый воркер пересчёта топа.
-//
-// Архитектура чтения:
-//
-//	Воркер раз в RefreshTTL вычисляет топ, сериализует JSON и атомарно
-//	заменяет указатель на CachedResult. Хендлер GET /top делает Load()
-//	и пишет Serialized в ответ — никаких мьютексов в критическом пути.
-//
-//	atomic.Pointer[T] (Go 1.19+) хранит один указатель без boxing,
-//	в отличие от atomic.Value — это критично при 50k rps.
 package topn
 
 import (
@@ -27,8 +17,6 @@ import (
 	"github.com/artyomstank/RWB_intern/internal/window"
 )
 
-// TopResponse — структура JSON-ответа GET /api/v1/top.
-// Определена здесь, а не в api, так как воркер сериализует её при каждом обновлении.
 type TopResponse struct {
 	Queries     []domain.TopEntry `json:"queries"`
 	Window      string            `json:"window"`
@@ -36,23 +24,17 @@ type TopResponse struct {
 	TotalActive int               `json:"total_active"`
 }
 
-// CachedResult — неизменяемый снапшот топа.
-// Хранится по указателю; атомарная замена при каждом обновлении.
 type CachedResult struct {
 	Items       []domain.TopEntry
 	UpdatedAt   time.Time
 	TotalActive int
-	// Serialized — предсериализованный JSON полного TopResponse.
-	// Хендлер пишет эти байты напрямую в ResponseWriter без дополнительных аллокаций.
-	Serialized []byte
+	Serialized  []byte
 }
 
-// Cache — lock-free кэш последнего результата.
 type Cache struct {
 	val atomic.Pointer[CachedResult]
 }
 
-// Load возвращает актуальный кэш. Может вернуть nil до первого вычисления.
 func (c *Cache) Load() *CachedResult {
 	return c.val.Load()
 }
@@ -62,7 +44,6 @@ func (c *Cache) store(r *CachedResult) {
 	c.val.Store(r)
 }
 
-// Worker — фоновый воркер, пересчитывающий топ каждые RefreshTTL.
 type Worker struct {
 	win      *window.Window
 	sl       *stoplist.StopList
@@ -73,7 +54,6 @@ type Worker struct {
 	refresh  time.Duration
 }
 
-// NewWorker создаёт Worker.
 func NewWorker(
 	win *window.Window,
 	sl *stoplist.StopList,
@@ -94,9 +74,7 @@ func NewWorker(
 	}
 }
 
-// Run запускает воркер. Блокирует до отмены ctx.
 func (w *Worker) Run(ctx context.Context) {
-	// Первый вычисление сразу при старте — чтобы не ждать первый тик.
 	w.compute()
 
 	ticker := time.NewTicker(w.refresh)
@@ -112,8 +90,6 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 }
 
-// compute — единственная горячая логика воркера.
-// Выполняется в одном goroutine, нет конкурентного доступа к compute().
 func (w *Worker) compute() {
 	start := time.Now()
 
@@ -122,7 +98,7 @@ func (w *Worker) compute() {
 	type candidate struct {
 		hash        uint64
 		query       string
-		count       int64 // Changed from int32 to match window.Stats.Count
+		count       int64
 		uniqueUsers uint64
 	}
 
@@ -131,15 +107,13 @@ func (w *Worker) compute() {
 	for h, stats := range snapshot {
 		q, ok := w.win.LookupQuery(h)
 		if !ok {
-			continue // был вычищен из Registry (race между Snapshot и Prune) — редко
+			continue
 		}
 
-		// Фильтр 1: стоп-лист (точное совпадение нормализованного запроса).
 		if w.sl.Contains(q) {
 			continue
 		}
 
-		// Фильтр 2: двухуровневый детектор аномалий.
 		if w.detector.IsAnomaly(h, stats.Count, stats.UniqueUsers) {
 			w.m.AnomaliesDetected.Inc()
 			slog.Debug("anomaly filtered", "query", q, "count", stats.Count, "unique_users", stats.UniqueUsers)
@@ -154,14 +128,12 @@ func (w *Worker) compute() {
 		})
 	}
 
-	// Собираем active hashes из snapshot для pruning детектора.
 	active := make(map[uint64]struct{}, len(snapshot))
 	for h := range snapshot {
 		active[h] = struct{}{}
 	}
 	w.detector.Prune(active)
 
-	// Сортируем по count desc, при равенстве — по query asc (стабильность).
 	slices.SortFunc(candidates, func(a, b candidate) int {
 		if c := cmp.Compare(b.count, a.count); c != 0 {
 			return c

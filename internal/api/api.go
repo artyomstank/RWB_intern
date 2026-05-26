@@ -1,16 +1,3 @@
-// Package api реализует HTTP-сервер сервиса trending.
-//
-// Маршруты:
-//
-//	GET  /api/v1/top                      — топ поисковых запросов (hot path)
-//	GET  /api/v1/admin/stoplist           — просмотр стоп-листа
-//	POST /api/v1/admin/stoplist           — добавить слово в стоп-лист
-//	DELETE /api/v1/admin/stoplist/{word}  — удалить слово из стоп-листа
-//	GET  /health                          — liveness probe
-//	GET  /metrics                         — Prometheus
-//
-// Go 1.22+ ServeMux поддерживает "METHOD /path" паттерны и path-параметры {name}.
-// Go 1.23+ r.Pattern отдаёт совпавший паттерн для метрик (низкая кардинальность).
 package api
 
 import (
@@ -26,7 +13,6 @@ import (
 	"github.com/artyomstank/RWB_intern/internal/topn"
 )
 
-// NewMux собирает http.Handler с маршрутами и middleware.
 func NewMux(
 	cache *topn.Cache,
 	sl *stoplist.StopList,
@@ -45,10 +31,6 @@ func NewMux(
 	return metricsMiddleware(m)(mux)
 }
 
-// ── Handlers ──────────────────────────────────────────────────────────────────
-
-// handleTop — горячий путь. atomic.Load + write precomputed bytes.
-// Никаких аллокаций в типичном случае.
 func handleTop(cache *topn.Cache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		result := cache.Load()
@@ -57,12 +39,10 @@ func handleTop(cache *topn.Cache) http.HandlerFunc {
 		w.Header().Set("Cache-Control", "no-store")
 
 		if result == nil {
-			// Холодный старт: топ ещё не вычислен.
 			w.Write([]byte(`{"queries":[],"window":"5m","total_active":0,"updated_at":null}`))
 			return
 		}
 
-		// Опциональный параметр ?limit=N для мобильных клиентов.
 		if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
 			if limit, err := strconv.Atoi(limitStr); err == nil && limit > 0 && limit < len(result.Items) {
 				writeTopSubset(w, result, limit)
@@ -70,13 +50,10 @@ func handleTop(cache *topn.Cache) http.HandlerFunc {
 			}
 		}
 
-		// Типичный случай: пишем предсериализованные байты без аллокаций.
 		w.Write(result.Serialized)
 	}
 }
 
-// writeTopSubset сериализует срез результата для ?limit=N запросов.
-// Аллоцирует — но вызывается редко (нестандартный limit).
 func writeTopSubset(w http.ResponseWriter, result *topn.CachedResult, limit int) {
 	subset := result.Items[:limit]
 	resp := topn.TopResponse{
@@ -90,7 +67,6 @@ func writeTopSubset(w http.ResponseWriter, result *topn.CachedResult, limit int)
 	}
 }
 
-// handleListStoplist возвращает все слова стоп-листа.
 func handleListStoplist(sl *stoplist.StopList) http.HandlerFunc {
 	type response struct {
 		Words []stoplist.Entry `json:"words"`
@@ -105,7 +81,6 @@ func handleListStoplist(sl *stoplist.StopList) http.HandlerFunc {
 	}
 }
 
-// handleAddStoplist добавляет слово в стоп-лист.
 func handleAddStoplist(sl *stoplist.StopList, m *metrics.Metrics) http.HandlerFunc {
 	type request struct {
 		Word string `json:"word"`
@@ -132,8 +107,6 @@ func handleAddStoplist(sl *stoplist.StopList, m *metrics.Metrics) http.HandlerFu
 	}
 }
 
-// handleDeleteStoplist удаляет слово из стоп-листа.
-// Использует path-параметр {word} — Go 1.22+ ServeMux.
 func handleDeleteStoplist(sl *stoplist.StopList, m *metrics.Metrics) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		word := r.PathValue("word")
@@ -153,15 +126,11 @@ func handleDeleteStoplist(sl *stoplist.StopList, m *metrics.Metrics) http.Handle
 	}
 }
 
-// handleHealth — liveness probe для Docker/k8s healthcheck.
 func handleHealth(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"status":"ok"}`))
 }
 
-// ── Middleware ─────────────────────────────────────────────────────────────────
-
-// responseWriter перехватывает статус-код для метрик.
 type responseWriter struct {
 	http.ResponseWriter
 	statusCode int
@@ -183,8 +152,6 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 	return rw.ResponseWriter.Write(b)
 }
 
-// metricsMiddleware измеряет латентность HTTP-запросов.
-// r.Pattern (Go 1.23+) — совпавший маршрутный паттерн, низкая кардинальность.
 func metricsMiddleware(m *metrics.Metrics) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -205,8 +172,6 @@ func metricsMiddleware(m *metrics.Metrics) func(http.Handler) http.Handler {
 	}
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -219,5 +184,4 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
-// Ensure domain is used (TopEntry is referenced via TopResponse in topn package).
 var _ domain.TopEntry
